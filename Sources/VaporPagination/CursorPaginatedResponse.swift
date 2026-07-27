@@ -67,4 +67,25 @@ extension CursorPaginator {
             )
         )
     }
+
+    /// Maps items through a transform and returns a `CursorPaginatedResponse`.
+    ///
+    /// This is the recommended way to return paginated results when your route
+    /// uses a DTO (or any other response type) instead of the raw model. Cursor
+    /// metadata — links, `hasMore`, cursor strings — is derived from the
+    /// model-level paginator and is unaffected by the transform.
+    ///
+    /// - Parameter transform: Closure that converts each `Element` (typically a
+    ///   Fluent model) into the response type `T` (typically a DTO).
+    /// - Returns: A `CursorPaginatedResponse<T>` ready to return from a route.
+    public func responding<T: Codable & Sendable>(
+        with transform: (Element) -> T
+    ) -> CursorPaginatedResponse<T> {
+        CursorPaginatedResponse<T>(
+            data: items.map(transform),
+            links: .init(next: nextPageUrl(), previous: previousPageUrl()),
+            meta: .init(perPage: perPage, hasMorePages: hasMore, onFirstPage: onFirstPage, onLastPage: onLastPage, cursor: cursor?.encoded(), cursorName: cursorName, path: path)
+        )
+    }
+
 }

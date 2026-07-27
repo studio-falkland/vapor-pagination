@@ -46,7 +46,7 @@ targets: [
 
 ## API
 
-`vapor-pagination` ships two value types and one `QueryBuilder` extension.
+`vapor-pagination` ships three value types and one `QueryBuilder` extension.
 
 ### `Cursor`
 
@@ -82,6 +82,24 @@ navigate forward and backward.
 | `url(cursor:) -> String` | Build a URL for an arbitrary cursor instance. |
 | `path` / `cursorName` / `query` / `fragment` | Inputs that drive URL construction. |
 
+### `CursorPaginatedResponse<Element>`
+
+A `Content`-conforming wrapper that turns a `CursorPaginator` into a JSON
+response envelope with `data`, `links`, and `meta` keys:
+
+```json
+{
+  "data": [ ... ],
+  "links": { "next": "...", "previous": null },
+  "meta": { "perPage": 15, "hasMorePages": true, "onFirstPage": true, "onLastPage": false, "cursor": null, "cursorName": "cursor", "path": "/users" }
+}
+```
+
+| Method | Description |
+|---|---|
+| `makeResponse() -> CursorPaginatedResponse<Element>` | Converts the paginator into a response with the same element type. |
+| `responding(with:) -> CursorPaginatedResponse<T>` | Maps items through a transform and returns a response with a different element type — ideal for DTOs. |
+
 ### `QueryBuilder.cursorPaginate(...)`
 
 ```swift
@@ -99,7 +117,9 @@ traversal. Single-column ordering for v1 — `orderColumn` defaults to
 `"id"` (the model's `@ID`). The caller must declare the same sort
 before invoking, e.g. `.sort(\.$id)`.
 
-## Usage example
+## Usage examples
+
+### Returning a paginator directly
 
 ```swift
 import Vapor
@@ -109,6 +129,35 @@ app.get("users") { req -> CursorPaginator<User> in
     try await User.query(on: req.db)
         .sort(\.$id)
         .cursorPaginate(perPage: 20, on: req)
+}
+```
+
+### Returning a JSON envelope with `makeResponse()`
+
+```swift
+app.get("users") { req -> CursorPaginatedResponse<User> in
+    try await User.query(on: req.db)
+        .sort(\.$id)
+        .cursorPaginate(perPage: 20, on: req)
+        .makeResponse()
+}
+```
+
+### Mapping to a DTO with `responding(with:)`
+
+```swift
+struct UserResponse: Content {
+    let id: UUID?
+    let displayName: String
+}
+
+app.get("users") { req -> CursorPaginatedResponse<UserResponse> in
+    try await User.query(on: req.db)
+        .sort(\.$id)
+        .cursorPaginate(perPage: 20, on: req)
+        .responding { user in
+            UserResponse(id: user.id, displayName: user.name.capitalized)
+        }
 }
 ```
 
