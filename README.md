@@ -107,7 +107,8 @@ public func cursorPaginate(
     perPage: Int,
     on request: Request,
     orderColumn: String? = nil,
-    cursorName: String = VaporPagination.defaultCursorName
+    cursorName: String = VaporPagination.defaultCursorName,
+    keyForElement: @escaping (Model) -> String = { Self.keyValue(of: $0) }
 ) async throws -> CursorPaginator<Model>
 ```
 
@@ -115,7 +116,56 @@ Performs `WHERE col <op> value` + `LIMIT perPage + 1`, uses the extra row
 to detect `hasMore`, and reverses the result in memory for backward
 traversal. Single-column ordering for v1 — `orderColumn` defaults to
 `"id"` (the model's `@ID`). The caller must declare the same sort
-before invoking, e.g. `.sort(\.$id)`.
+before invoking, e.g. `.sort(\$id)`.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `perPage` | — | Number of items per page. |
+| `on` | — | The current HTTP request (reads the cursor from the query string). |
+| `orderColumn` | `"id"` | Database column to order and cursor by. |
+| `cursorName` | `"cursor"` | Query-string parameter name carrying the cursor. |
+| `keyForElement` | Reads `model.id` | Closure that extracts the stringified cursor-anchor value from a model. **Required** when using a non-`id` order column. |
+
+> **Note:** When `orderColumn` is `"id"` (the default), the library
+> automatically extracts the model's ID value for the cursor — you
+> don't need to pass `keyForElement`. For any other column you **must**
+> provide a `keyForElement` closure (see the examples below).
+
+For non-default order columns, pass the column name explicitly and provide
+a `keyForElement` closure that extracts the cursor-anchor value from each
+model. The closure must return a string representation that is
+**lexicographically sortable** in the same order as the column:
+
+```swift
+// Ordering by a date column using ISO 8601 (lexicographically sortable):
+try await Article.query(on: req.db)
+    .filter(\.$published == true)
+    .sort(\.$publishedAt, .ascending)
+    .cursorPaginate(perPage: 20, on: req, orderColumn: "publishedAt") { article in
+        // ISO 8601 round-trips through parseLiteral and is
+        // lexicographically sortable.
+        ISO8601DateFormatter().string(from: article.publishedAt)
+    }
+
+// Ordering by a date column using a Unix timestamp:
+try await Article.query(on: req.db)
+    .filter(\.$published == true)
+    .sort(\.$publishedAt, .ascending)
+    .cursorPaginate(perPage: 20, on: req, orderColumn: "publishedAt") { article in
+        String(article.publishedAt.timeIntervalSince1970)
+    }
+
+// Ordering by a numeric column:
+try await Product.query(on: req.db)
+    .sort(\.$price, .ascending)
+    .cursorPaginate(perPage: 20, on: req, orderColumn: "price") { product in
+        String(product.price)
+    }
+```
+
+The library's `parseLiteral` helper recognises `Int`, `UUID`, ISO 8601
+dates, and Unix timestamps (as `Double`), and binds them with the correct
+SQL type.
 
 ## Usage examples
 
@@ -159,15 +209,6 @@ app.get("users") { req -> CursorPaginatedResponse<UserResponse> in
             UserResponse(id: user.id, displayName: user.name.capitalized)
         }
 }
-```
-
-For non-default order columns, pass the column name explicitly:
-
-```swift
-try await Article.query(on: req.db)
-    .filter(\.$published == true)
-    .sort(\.$publishedAt)
-    .cursorPaginate(perPage: 20, on: req, orderColumn: "publishedAt")
 ```
 
 To use a custom cursor query-string parameter (e.g. for multiple
