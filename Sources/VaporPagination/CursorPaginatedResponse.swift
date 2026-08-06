@@ -7,7 +7,7 @@ import Vapor
 /// {
 ///   "data": [ ... ],
 ///   "links": { "next": "...", "previous": null },
-///   "meta": { "perPage": 15, "hasMorePages": true, ... }
+///   "meta": { "perPage": 15, "hasMorePages": true, "cursor": "...", ... }
 /// }
 /// ```
 public struct CursorPaginatedResponse<Element: Codable & Sendable>: Content {
@@ -36,12 +36,9 @@ public struct CursorPaginatedResponse<Element: Codable & Sendable>: Content {
         public let onFirstPage: Bool
         /// Whether this is the last page.
         public let onLastPage: Bool
-        /// The current cursor, encoded as base64url.
+        /// The cursor for the next page, encoded as base64url.
+        /// `nil` on the last page.
         public let cursor: String?
-        /// The query-string parameter name carrying the cursor.
-        public let cursorName: String
-        /// The base path used for pagination URLs.
-        public let path: String
     }
 }
 
@@ -61,9 +58,7 @@ extension CursorPaginator {
                 hasMorePages: self.hasMore,
                 onFirstPage: self.onFirstPage,
                 onLastPage: self.onLastPage,
-                cursor: self.cursor?.encoded(),
-                cursorName: self.cursorName,
-                path: self.path
+                cursor: self.nextCursor()?.encoded()
             )
         )
     }
@@ -84,7 +79,7 @@ extension CursorPaginator {
         CursorPaginatedResponse<T>(
             data: items.map(transform),
             links: .init(next: nextPageUrl(), previous: previousPageUrl()),
-            meta: .init(perPage: perPage, hasMorePages: hasMore, onFirstPage: onFirstPage, onLastPage: onLastPage, cursor: cursor?.encoded(), cursorName: cursorName, path: path)
+            meta: .init(perPage: perPage, hasMorePages: hasMore, onFirstPage: onFirstPage, onLastPage: onLastPage, cursor: nextCursor()?.encoded())
         )
     }
 

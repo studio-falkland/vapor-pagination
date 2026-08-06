@@ -51,9 +51,8 @@ struct CursorPaginatedResponseTests {
         #expect(response.meta.hasMorePages == paginator.hasMore)
         #expect(response.meta.onFirstPage == paginator.onFirstPage)
         #expect(response.meta.onLastPage == paginator.onLastPage)
-        #expect(response.meta.cursor == nil)
-        #expect(response.meta.cursorName == paginator.cursorName)
-        #expect(response.meta.path == paginator.path)
+        // meta.cursor is the next cursor, not the incoming one.
+        #expect(response.meta.cursor == paginator.nextCursor()?.encoded())
     }
 
     @Test
@@ -72,9 +71,8 @@ struct CursorPaginatedResponseTests {
         #expect(response.meta.hasMorePages == true)
         #expect(response.meta.onFirstPage == false)
         #expect(response.meta.onLastPage == false)
-        #expect(response.meta.cursor == current.encoded())
-        #expect(response.meta.cursorName == paginator.cursorName)
-        #expect(response.meta.path == paginator.path)
+        // meta.cursor is the next cursor (anchored at last item), not the incoming one.
+        #expect(response.meta.cursor == paginator.nextCursor()?.encoded())
     }
 
     @Test
@@ -93,7 +91,8 @@ struct CursorPaginatedResponseTests {
         #expect(response.meta.hasMorePages == false)
         #expect(response.meta.onFirstPage == false)
         #expect(response.meta.onLastPage == true)
-        #expect(response.meta.cursor == current.encoded())
+        // On the last page the next cursor is nil.
+        #expect(response.meta.cursor == nil)
     }
 
     @Test
@@ -154,9 +153,8 @@ struct CursorPaginatedResponseTests {
         #expect(response.meta.hasMorePages == paginator.hasMore)
         #expect(response.meta.onFirstPage == paginator.onFirstPage)
         #expect(response.meta.onLastPage == paginator.onLastPage)
-        #expect(response.meta.cursor == nil)
-        #expect(response.meta.cursorName == paginator.cursorName)
-        #expect(response.meta.path == paginator.path)
+        // meta.cursor is the next cursor, not the incoming one.
+        #expect(response.meta.cursor == paginator.nextCursor()?.encoded())
     }
 
     @Test
@@ -172,7 +170,8 @@ struct CursorPaginatedResponseTests {
             UserDTO(displayName: user.name)
         }
 
-        #expect(response.meta.cursor == current.encoded())
+        // On the last page the next cursor is nil.
+        #expect(response.meta.cursor == nil)
         #expect(response.meta.onFirstPage == false)
         #expect(response.meta.onLastPage == true)
         #expect(response.meta.hasMorePages == false)

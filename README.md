@@ -91,7 +91,7 @@ response envelope with `data`, `links`, and `meta` keys:
 {
   "data": [ ... ],
   "links": { "next": "...", "previous": null },
-  "meta": { "perPage": 15, "hasMorePages": true, "onFirstPage": true, "onLastPage": false, "cursor": null, "cursorName": "cursor", "path": "/users" }
+  "meta": { "perPage": 15, "hasMorePages": true, "onFirstPage": true, "onLastPage": false, "cursor": "eyJwb2ludHMiOiJuZXh0Iiw..." }
 }
 ```
 
