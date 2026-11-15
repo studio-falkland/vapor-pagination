@@ -1,3 +1,4 @@
+import Foundation
 import Vapor
 import VaporUtilities
 
@@ -31,16 +32,22 @@ private struct FlatQuery: Decodable {
 
 extension Request {
     /// Returns the request's full origin + path, suitable for use as
-    /// the `path` field of a `CursorPaginator`. Built via
-    /// `VaporUtilities`'s `Request.absoluteURL`, which handles scheme
-    /// (from server TLS configuration), host, and port for us.
-    var paginationPath: String {
-        guard var components = URLComponents(string: self.absoluteURL.absoluteString) else {
-            return self.absoluteURL.absoluteString
+    /// the `path` field of a `CursorPaginator`.
+    ///
+    /// Built from `VaporUtilities`'s ``Request/absoluteURL(baseURL:)``, which
+    /// resolves the origin from the forwarded headers, the `Host` header, or
+    /// the local address. The query and fragment are dropped.
+    ///
+    /// - Parameter baseURL: An optional origin override.
+    /// - Returns: The origin and path, without the query or fragment.
+    func paginationPath(baseURL: URL? = nil) -> String {
+        let url = self.absoluteURL(baseURL: baseURL)
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
+            return url.absoluteString
         }
         components.query = nil
         components.fragment = nil
-        return components.string ?? self.absoluteURL.absoluteString
+        return components.string ?? url.absoluteString
     }
 
     /// Returns the request's query parameters as a flat dictionary,

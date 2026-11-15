@@ -1,4 +1,4 @@
-import Fluent
+import FluentKit
 import Foundation
 import Vapor
 
@@ -27,7 +27,7 @@ extension QueryBuilder {
     ///
     ///   For example, ordering by `"createdAt"`:
     ///   ```swift
-    ///   try await Article.query(on: req.db)
+    ///   try await Article.query(on: database)
     ///       .sort(\.$createdAt, .ascending)
     ///       .cursorPaginate(perPage: 20, on: req, orderColumn: "createdAt") { article in
     ///           String(article.createdAt.timeIntervalSince1970)
@@ -38,6 +38,7 @@ extension QueryBuilder {
         on request: Request,
         orderColumn: String? = nil,
         cursorName: String = VaporPagination.defaultCursorName,
+        baseURL: URL? = nil,
         keyForElement: @escaping (Model) -> String
     ) async throws -> CursorPaginator<Model> {
         try await self._cursorPaginate(
@@ -45,6 +46,7 @@ extension QueryBuilder {
             on: request,
             orderColumn: orderColumn,
             cursorName: cursorName,
+            baseURL: baseURL,
             keyForElement: keyForElement
         )
     }
@@ -56,13 +58,15 @@ extension QueryBuilder {
         perPage: Int,
         on request: Request,
         orderColumn: String? = nil,
-        cursorName: String = VaporPagination.defaultCursorName
+        cursorName: String = VaporPagination.defaultCursorName,
+        baseURL: URL? = nil
     ) async throws -> CursorPaginator<Model> {
         try await self._cursorPaginate(
             perPage: perPage,
             on: request,
             orderColumn: orderColumn,
             cursorName: cursorName,
+            baseURL: baseURL,
             keyForElement: { Self.keyValue(of: $0) }
         )
     }
@@ -74,6 +78,7 @@ extension QueryBuilder {
         on request: Request,
         orderColumn: String?,
         cursorName: String,
+        baseURL: URL?,
         keyForElement: @escaping (Model) -> String
     ) async throws -> CursorPaginator<Model> {
         let cursor = Cursor(from: request.query[String.self, at: cursorName])
@@ -145,7 +150,7 @@ extension QueryBuilder {
             perPage: perPage,
             cursor: cursor,
             hasMore: hasMore,
-            path: request.paginationPath,
+            path: request.paginationPath(baseURL: baseURL),
             cursorName: cursorName,
             query: request.appendedQuery(excluding: cursorName),
             orderColumn: resolvedOrderColumn,

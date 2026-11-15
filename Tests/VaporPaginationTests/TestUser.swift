@@ -1,6 +1,5 @@
-import Fluent
+import FluentKit
 import Foundation
-import Vapor
 
 /// In-memory model used by the cursor-pagination integration tests.
 /// Has a single `@ID` and a single `name` field, matching the

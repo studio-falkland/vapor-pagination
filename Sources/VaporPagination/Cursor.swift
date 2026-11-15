@@ -1,4 +1,5 @@
 import Foundation
+import VaporUtilities
 
 /// An opaque anchor for cursor-based pagination.
 ///
