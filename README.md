@@ -5,7 +5,8 @@
 <p></p>
 
 <p align="center">
-  <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-5.10+-F05138?logo=swift&logoColor=white" alt="Swift 5.10+"></a>
+  <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.4+-F05138?logo=swift&logoColor=white" alt="Swift 6.4+"></a>
+  <a href="https://github.com/vapor/vapor"><img src="https://img.shields.io/badge/Vapor-5-6DBEEB?logo=vapor&logoColor=white" alt="Vapor 5"></a>
   <a href="https://swift.org/package-manager"><img src="https://img.shields.io/badge/SPM-compatible-4BC51D?logo=swift&logoColor=white" alt="SPM Compatible"></a>
   <a href="https://github.com/studio-falkland/vapor-pagination/releases"><img src="https://img.shields.io/github/v/release/studio-falkland/vapor-pagination?color=blue" alt="Latest Release"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/github/license/studio-falkland/vapor-pagination" alt="License"></a>
@@ -19,10 +20,10 @@ order column is indexed) and stable under concurrent writes — no skipped or
 duplicated rows when records are inserted or deleted mid-traversal.
 
 Use it with any `Fluent` model that exposes a `@ID` and an explicit
-`sort`:
+`sort`. Pass the `Databases` instance to your controller and query through it:
 
 ```swift
-let page: CursorPaginator<User> = try await User.query(on: req.db)
+let page: CursorPaginator<User> = try await User.query(on: database)
     .sort(\.$id)
     .cursorPaginate(perPage: 20, on: req)
 
@@ -35,7 +36,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/studio-falkland/vapor-pagination", from: "1.0.0"),
+    .package(url: "https://github.com/studio-falkland/vapor-pagination", branch: "vapor5"),
 ],
 targets: [
     .target(name: "YourTarget", dependencies: [
@@ -108,7 +109,8 @@ public func cursorPaginate(
     on request: Request,
     orderColumn: String? = nil,
     cursorName: String = VaporPagination.defaultCursorName,
-    keyForElement: @escaping (Model) -> String = { Self.keyValue(of: $0) }
+    baseURL: URL? = nil,
+    keyForElement: @escaping (Model) -> String
 ) async throws -> CursorPaginator<Model>
 ```
 
@@ -124,6 +126,7 @@ before invoking, e.g. `.sort(\$id)`.
 | `on` | — | The current HTTP request (reads the cursor from the query string). |
 | `orderColumn` | `"id"` | Database column to order and cursor by. |
 | `cursorName` | `"cursor"` | Query-string parameter name carrying the cursor. |
+| `baseURL` | `nil` | Origin override for generated page URLs. Useful for direct TLS deployments. |
 | `keyForElement` | Reads `model.id` | Closure that extracts the stringified cursor-anchor value from a model. **Required** when using a non-`id` order column. |
 
 > **Note:** When `orderColumn` is `"id"` (the default), the library
@@ -138,7 +141,7 @@ model. The closure must return a string representation that is
 
 ```swift
 // Ordering by a date column using ISO 8601 (lexicographically sortable):
-try await Article.query(on: req.db)
+try await Article.query(on: database)
     .filter(\.$published == true)
     .sort(\.$publishedAt, .ascending)
     .cursorPaginate(perPage: 20, on: req, orderColumn: "publishedAt") { article in
@@ -148,7 +151,7 @@ try await Article.query(on: req.db)
     }
 
 // Ordering by a date column using a Unix timestamp:
-try await Article.query(on: req.db)
+try await Article.query(on: database)
     .filter(\.$published == true)
     .sort(\.$publishedAt, .ascending)
     .cursorPaginate(perPage: 20, on: req, orderColumn: "publishedAt") { article in
@@ -156,7 +159,7 @@ try await Article.query(on: req.db)
     }
 
 // Ordering by a numeric column:
-try await Product.query(on: req.db)
+try await Product.query(on: database)
     .sort(\.$price, .ascending)
     .cursorPaginate(perPage: 20, on: req, orderColumn: "price") { product in
         String(product.price)
@@ -164,7 +167,7 @@ try await Product.query(on: req.db)
 ```
 
 The library's `parseLiteral` helper recognises `Int`, `UUID`, ISO 8601
-dates, and Unix timestamps (as `Double`), and binds them with the correct
+dates, and Unix timestamps (as `Date`), and binds them with the correct
 SQL type.
 
 ## Usage examples
@@ -176,7 +179,7 @@ import Vapor
 import VaporPagination
 
 app.get("users") { req -> CursorPaginator<User> in
-    try await User.query(on: req.db)
+    try await User.query(on: database)
         .sort(\.$id)
         .cursorPaginate(perPage: 20, on: req)
 }
@@ -186,7 +189,7 @@ app.get("users") { req -> CursorPaginator<User> in
 
 ```swift
 app.get("users") { req -> CursorPaginatedResponse<User> in
-    try await User.query(on: req.db)
+    try await User.query(on: database)
         .sort(\.$id)
         .cursorPaginate(perPage: 20, on: req)
         .makeResponse()
@@ -202,7 +205,7 @@ struct UserResponse: Content {
 }
 
 app.get("users") { req -> CursorPaginatedResponse<UserResponse> in
-    try await User.query(on: req.db)
+    try await User.query(on: database)
         .sort(\.$id)
         .cursorPaginate(perPage: 20, on: req)
         .responding { user in
@@ -215,7 +218,7 @@ To use a custom cursor query-string parameter (e.g. for multiple
 paginators on the same route):
 
 ```swift
-try await Comment.query(on: req.db)
+try await Comment.query(on: database)
     .sort(\.$id)
     .cursorPaginate(perPage: 20, on: req, cursorName: "comments_cursor")
 ```
