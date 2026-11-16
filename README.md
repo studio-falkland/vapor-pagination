@@ -52,7 +52,7 @@ targets: [
 ### `Cursor`
 
 An opaque anchor for cursor-based pagination. Encodes the ordered-column
-value of a row plus a `next` / `previous` direction as URL-safe base64
+value(s) of a row plus a `next` / `previous` direction as URL-safe base64
 JSON so it can travel in a query string as `?cursor=...`.
 
 | Member | Description |
@@ -62,6 +62,17 @@ JSON so it can travel in a query string as `?cursor=...`.
 | `encoded() -> String` | JSON + URL-safe base64 encode. |
 | `subscript(column:) -> String?` | Read a column's value off the cursor. |
 | `points: .next` / `.previous` | Which way the cursor points. |
+
+### `CursorOrder`
+
+A single ordering term: a column plus a direction. An array of `CursorOrder`
+defines the lexicographic precedence used for keyset pagination.
+
+| Member | Description |
+|---|---|
+| `init(column:direction:)` | Build an order term. `direction` defaults to `.ascending`. |
+| `.ascending(_:)` / `.descending(_:)` | Shorthand constructors. |
+| `column` / `direction` | The column name and its sort direction. |
 
 ### `CursorPaginator<Element>`
 
@@ -78,7 +89,10 @@ navigate forward and backward.
 | `hasPages` | Whether there are enough items to split into multiple pages. |
 | `hasMorePages` | Whether more items exist beyond this page. |
 | `onFirstPage` / `onLastPage` | Position flags. |
-| `nextCursor() / previousCursor() -> Cursor?` | Cursors for the next / previous page, derived from the order column. |
+| `orders` | The ordering terms, in precedence order. |
+| `valuesForElement` | Closure that extracts the stringified anchor values for an item. |
+| `orderColumn` | The first ordering column (convenience for single-column callers). |
+| `nextCursor() / previousCursor() -> Cursor?` | Cursors for the next / previous page, derived from the order columns. |
 | `nextPageUrl() / previousPageUrl() -> String?` | Full URLs for the next / previous page, including any appended query parameters and the URL fragment. |
 | `url(cursor:) -> String` | Build a URL for an arbitrary cursor instance. |
 | `path` / `cursorName` / `query` / `fragment` | Inputs that drive URL construction. |
@@ -103,6 +117,86 @@ response envelope with `data`, `links`, and `meta` keys:
 
 ### `QueryBuilder.cursorPaginate(...)`
 
+There are two forms: a multi-column form and a single-column convenience form.
+
+#### Multi-column
+
+```swift
+public func cursorPaginate(
+    perPage: Int,
+    on request: Request,
+    orders: [CursorOrder],
+    cursorName: String = VaporPagination.defaultCursorName,
+    baseURL: URL? = nil,
+    valuesForElement: @escaping (Model) -> [String: String]
+) async throws -> CursorPaginator<Model>
+```
+
+Builds a lexicographic keyset predicate from the cursor values:
+
+```sql
+(c0 > v0)
+OR (c0 = v0 AND c1 > v1)
+OR (c0 = v0 AND c1 = v1 AND c2 > v2)
+```
+
+Each comparison follows its column's direction, and the whole predicate and
+sort order are reversed for backward traversal. The query fetches
+`perPage + 1` rows so the extra row can signal `hasMore`.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `perPage` | — | Number of items per page. |
+| `on` | — | The current HTTP request (reads the cursor from the query string). |
+| `orders` | — | Ordering terms, in precedence order. |
+| `cursorName` | `"cursor"` | Query-string parameter name carrying the cursor. |
+| `baseURL` | `nil` | Origin override for generated page URLs. Useful for direct TLS deployments. |
+| `valuesForElement` | — | Closure that returns the stringified anchor value for every ordered column, keyed by column name. |
+
+If the query already declares a sort on one of the ordered columns, its
+direction takes precedence over the direction in the corresponding
+`CursorOrder`; otherwise the `CursorOrder` direction is used. The library
+applies the sorts itself, so declaring them is optional.
+
+```swift
+// Order by last name, then first name, then id as a stable tie-breaker.
+try await User.query(on: database)
+    .sort(\.$lastName, .ascending)
+    .sort(\.$firstName, .ascending)
+    .sort(\.$id, .ascending)
+    .cursorPaginate(
+        perPage: 20,
+        on: req,
+        orders: [.ascending("lastName"), .ascending("firstName"), .ascending("id")]
+    ) { user in
+        [
+            "lastName": user.lastName,
+            "firstName": user.firstName,
+            "id": user.id!.uuidString,
+        ]
+    }
+```
+
+Mixed directions are supported. The following orders by name ascending and
+uses `id` descending to break ties:
+
+```swift
+try await User.query(on: database)
+    .cursorPaginate(
+        perPage: 20,
+        on: req,
+        orders: [.ascending("name"), .descending("id")]
+    ) { user in
+        ["name": user.name, "id": user.id!.uuidString]
+    }
+```
+
+> **Tip:** Always include a unique column (such as the primary key) as the
+> final order term. Without a unique tie-breaker, rows that compare equal on
+> every ordered column can be skipped or repeated across pages.
+
+#### Single-column convenience
+
 ```swift
 public func cursorPaginate(
     perPage: Int,
@@ -116,9 +210,8 @@ public func cursorPaginate(
 
 Performs `WHERE col <op> value` + `LIMIT perPage + 1`, uses the extra row
 to detect `hasMore`, and reverses the result in memory for backward
-traversal. Single-column ordering for v1 — `orderColumn` defaults to
-`"id"` (the model's `@ID`). The caller must declare the same sort
-before invoking, e.g. `.sort(\$id)`.
+traversal. `orderColumn` defaults to `"id"` (the model's `@ID`). The caller
+must declare the same sort before invoking, e.g. `.sort(\.$id)`.
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -168,7 +261,7 @@ try await Product.query(on: database)
 
 The library's `parseLiteral` helper recognises `Int`, `UUID`, ISO 8601
 dates, and Unix timestamps (as `Date`), and binds them with the correct
-SQL type.
+SQL type. The same parser is used for every column in a multi-column cursor.
 
 ## Usage examples
 

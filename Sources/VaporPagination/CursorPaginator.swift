@@ -3,10 +3,10 @@ import Foundation
 /// A page of results plus the cursor-pagination metadata needed to
 /// navigate forward and backward.
 ///
-/// Phase 1: a pure value type with no database coupling. Callers construct
-/// it from in-memory items and a key extractor. Phase 2 will add a
-/// `QueryBuilder.cursorPaginate` integration that builds instances from
-/// Fluent queries.
+/// A paginator is a pure value type with no database coupling. Callers
+/// construct it from in-memory items, the ordering terms, and a closure that
+/// extracts the cursor-anchor values for each item. `QueryBuilder.cursorPaginate`
+/// builds instances from Fluent queries.
 public struct CursorPaginator<Element> {
     /// The items on the current page.
     public let items: [Element]
@@ -32,12 +32,38 @@ public struct CursorPaginator<Element> {
     /// Optional URL fragment appended to generated URLs.
     public var fragment: String?
 
-    /// The column cursors are anchored to (single-column ordering for v1).
-    public let orderColumn: String
+    /// The ordering terms cursors are anchored to, in precedence order.
+    public let orders: [CursorOrder]
 
-    /// Extracts the stringified anchor value for a given element.
-    public let keyForElement: (Element) -> String
+    /// Extracts the stringified anchor values for a given element, keyed by
+    /// column name.
+    public let valuesForElement: (Element) -> [String: String]
 
+    public init(
+        items: [Element],
+        perPage: Int,
+        cursor: Cursor?,
+        hasMore: Bool,
+        path: String,
+        cursorName: String = VaporPagination.defaultCursorName,
+        query: [String: String] = [:],
+        fragment: String? = nil,
+        orders: [CursorOrder],
+        valuesForElement: @escaping (Element) -> [String: String]
+    ) {
+        self.items = items
+        self.perPage = perPage
+        self.cursor = cursor
+        self.hasMore = hasMore
+        self.path = path
+        self.cursorName = cursorName
+        self.query = query
+        self.fragment = fragment
+        self.orders = orders
+        self.valuesForElement = valuesForElement
+    }
+
+    /// Convenience initializer for single-column ordering.
     public init(
         items: [Element],
         perPage: Int,
@@ -50,16 +76,18 @@ public struct CursorPaginator<Element> {
         orderColumn: String,
         keyForElement: @escaping (Element) -> String
     ) {
-        self.items = items
-        self.perPage = perPage
-        self.cursor = cursor
-        self.hasMore = hasMore
-        self.path = path
-        self.cursorName = cursorName
-        self.query = query
-        self.fragment = fragment
-        self.orderColumn = orderColumn
-        self.keyForElement = keyForElement
+        self.init(
+            items: items,
+            perPage: perPage,
+            cursor: cursor,
+            hasMore: hasMore,
+            path: path,
+            cursorName: cursorName,
+            query: query,
+            fragment: fragment,
+            orders: [CursorOrder(column: orderColumn)],
+            valuesForElement: { [orderColumn: keyForElement($0)] }
+        )
     }
 }
 
@@ -79,20 +107,23 @@ public extension CursorPaginator {
     /// Whether this is the last page.
     var onLastPage: Bool { !hasMore }
 
+    /// The first ordering column. Retained for single-column callers.
+    var orderColumn: String { orders.first?.column ?? "id" }
+
     // MARK: - Cursor derivation
 
     /// Cursor for the next page, anchored at the last item of this page.
     /// Returns nil when there are no more pages or no items.
     func nextCursor() -> Cursor? {
         guard hasMore, let last = items.last else { return nil }
-        return Cursor(points: .next, values: [orderColumn: keyForElement(last)])
+        return Cursor(points: .next, values: valuesForElement(last))
     }
 
     /// Cursor for the previous page, anchored at the first item of this page.
     /// Returns nil on the first page or when there are no items.
     func previousCursor() -> Cursor? {
         guard cursor != nil, let first = items.first else { return nil }
-        return Cursor(points: .previous, values: [orderColumn: keyForElement(first)])
+        return Cursor(points: .previous, values: valuesForElement(first))
     }
 
     // MARK: - URLs

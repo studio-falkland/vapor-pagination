@@ -61,6 +61,48 @@ struct CursorPaginatorIntegrationTests {
         }
     }
 
+    private func seed(_ db: any Database, names: [String]) async throws -> [TestUser] {
+        var users: [TestUser] = []
+        for name in names {
+            let u = TestUser(name: name)
+            try await u.create(on: db)
+            users.append(u)
+        }
+        return users
+    }
+
+    /// Walks every page forward, collecting the items in traversal order.
+    private func collectAllPages(
+        _ db: any Database,
+        perPage: Int,
+        orders: [CursorOrder],
+        sort: (QueryBuilder<TestUser>) -> QueryBuilder<TestUser>
+    ) async throws -> [TestUser] {
+        var collected: [TestUser] = []
+        var cursor: Cursor?
+
+        // Bound the loop so a broken cursor cannot spin forever.
+        for _ in 0..<20 {
+            let url = cursor.map { "/users?cursor=" + $0.encoded() } ?? "/users"
+            let request = makeRequest(url: url)
+            let page: CursorPaginator<TestUser> = try await sort(TestUser.query(on: db))
+                .cursorPaginate(
+                    perPage: perPage,
+                    on: request,
+                    orders: orders,
+                    valuesForElement: { user in
+                        ["name": user.name, "id": user.id!.uuidString]
+                    }
+                )
+            collected.append(contentsOf: page.items)
+
+            guard let next = page.nextCursor() else { break }
+            cursor = next
+        }
+
+        return collected
+    }
+
     @Test
     func firstPageReturnsItemsAndHasMore() async throws {
         try await withApp { db in
@@ -119,6 +161,79 @@ struct CursorPaginatorIntegrationTests {
             #expect(page.hasMore == false)
             #expect(page.onLastPage == true)
             #expect(page.nextPageUrl() == nil)
+        }
+    }
+
+    // MARK: - Multi-column ordering
+
+    @Test
+    func multiColumnOrderingTraversesWithoutSkipsOrDuplicates() async throws {
+        try await withApp { db in
+            let seeded = try await seed(db, names: ["a", "a", "b", "b", "c", "c"])
+            let expectedIDs = Set(seeded.compactMap(\.id))
+
+            let collected = try await collectAllPages(
+                db,
+                perPage: 2,
+                orders: [.ascending("name"), .ascending("id")]
+            ) { query in
+                query.sort(\.$name, .ascending).sort(\.$id, .ascending)
+            }
+
+            // Every row appears exactly once.
+            #expect(collected.count == 6)
+            #expect(Set(collected.compactMap(\.id)) == expectedIDs)
+
+            // Names are non-decreasing across the traversal.
+            let names = collected.map(\.name)
+            #expect(names == names.sorted())
+        }
+    }
+
+    @Test
+    func multiColumnMixedDirectionsTraverseWithoutSkipsOrDuplicates() async throws {
+        try await withApp { db in
+            let seeded = try await seed(db, names: ["a", "a", "b", "b", "c", "c"])
+            let expectedIDs = Set(seeded.compactMap(\.id))
+
+            let collected = try await collectAllPages(
+                db,
+                perPage: 2,
+                orders: [.ascending("name"), .descending("id")]
+            ) { query in
+                query.sort(\.$name, .ascending).sort(\.$id, .descending)
+            }
+
+            #expect(collected.count == 6)
+            #expect(Set(collected.compactMap(\.id)) == expectedIDs)
+
+            // Names are non-decreasing even though the tie-breaker is descending.
+            let names = collected.map(\.name)
+            #expect(names == names.sorted())
+        }
+    }
+
+    @Test
+    func orderDirectionIsUsedWhenNoSortIsDeclared() async throws {
+        try await withApp { db in
+            let seeded = try await seed(db, names: ["a", "a", "b", "b", "c", "c"])
+            let expectedIDs = Set(seeded.compactMap(\.id))
+
+            let collected = try await collectAllPages(
+                db,
+                perPage: 2,
+                orders: [.descending("name"), .ascending("id")]
+            ) { query in
+                // No `.sort` calls: the library applies the order directions.
+                query
+            }
+
+            #expect(collected.count == 6)
+            #expect(Set(collected.compactMap(\.id)) == expectedIDs)
+
+            // Names are non-increasing because the primary order is descending.
+            let names = collected.map(\.name)
+            #expect(names == names.sorted(by: >))
         }
     }
 }

@@ -149,4 +149,70 @@ struct CursorPaginatorTests {
         let cursor = Cursor(points: .next, values: ["id": "1"])
         #expect(p.url(cursor: cursor) == "https://api.example.com/users?page=" + cursor.encoded())
     }
+
+    // MARK: - Multi-column ordering
+
+    private func makeMultiColumnPaginator(
+        items: [User],
+        cursor: Cursor? = nil,
+        hasMore: Bool,
+        orders: [CursorOrder] = [.ascending("name"), .descending("id")]
+    ) -> CursorPaginator<User> {
+        CursorPaginator(
+            items: items,
+            perPage: 3,
+            cursor: cursor,
+            hasMore: hasMore,
+            path: "https://api.example.com/users",
+            orders: orders,
+            valuesForElement: { ["name": $0.name, "id": String($0.id)] }
+        )
+    }
+
+    @Test
+    func multiColumnNextCursorCapturesEveryOrderValue() {
+        let p = makeMultiColumnPaginator(
+            items: [User(id: 1, name: "a"), User(id: 2, name: "b")],
+            hasMore: true
+        )
+
+        #expect(p.nextCursor() == Cursor(points: .next, values: ["name": "b", "id": "2"]))
+        #expect(p.previousCursor() == nil)
+    }
+
+    @Test
+    func multiColumnPreviousCursorCapturesEveryOrderValue() {
+        let current = Cursor(points: .next, values: ["name": "b", "id": "2"])
+        let p = makeMultiColumnPaginator(
+            items: [User(id: 3, name: "c"), User(id: 4, name: "d")],
+            cursor: current,
+            hasMore: false
+        )
+
+        #expect(p.previousCursor() == Cursor(points: .previous, values: ["name": "c", "id": "3"]))
+        #expect(p.nextCursor() == nil)
+    }
+
+    @Test
+    func orderColumnReflectsFirstOrder() {
+        let p = makeMultiColumnPaginator(
+            items: [User(id: 1, name: "a")],
+            hasMore: false,
+            orders: [.ascending("name"), .ascending("id")]
+        )
+
+        #expect(p.orderColumn == "name")
+        #expect(p.orders == [.ascending("name"), .ascending("id")])
+    }
+
+    @Test
+    func singleColumnConvenienceInitializerStillWorks() {
+        let p = makePaginator(
+            items: [User(id: 1, name: "a"), User(id: 2, name: "b")],
+            hasMore: true
+        )
+
+        #expect(p.orders == [.ascending("id")])
+        #expect(p.nextCursor() == Cursor(points: .next, values: ["id": "2"]))
+    }
 }
