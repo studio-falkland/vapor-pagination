@@ -47,7 +47,7 @@ targets: [
 
 ## API
 
-`vapor-pagination` ships three value types and one `QueryBuilder` extension.
+`vapor-pagination` ships four value types and one `QueryBuilder` extension.
 
 ### `Cursor`
 
@@ -57,11 +57,27 @@ JSON so it can travel in a query string as `?cursor=...`.
 
 | Member | Description |
 |---|---|
-| `init(points:values:)` | Build a cursor from a direction and a `[String: String]` of column → value. |
-| `init?(from: String?)` | Decode a cursor from a query-string value. Returns `nil` for absent or malformed input. |
+| `init(points:values:)` | Build a cursor from a direction and a `[String: CursorValue]` of column → value. |
+| `init?(from: String?)` | Decode a cursor from a query-string value. Returns `nil` for absent, malformed, or unsupported-version input. |
 | `encoded() -> String` | JSON + URL-safe base64 encode. |
-| `subscript(column:) -> String?` | Read a column's value off the cursor. |
+| `subscript(column:) -> CursorValue?` | Read a column's typed value off the cursor. |
 | `points: .next` / `.previous` | Which way the cursor points. |
+| `version` | The cursor wire-format version. Older or unknown versions are treated as "first page". |
+
+### `CursorValue`
+
+A typed cursor-anchor value. The cursor carries the type alongside the value
+so the query layer binds it with the correct SQL type instead of guessing from
+its string representation.
+
+| Case | Description |
+|---|---|
+| `.string(String)` | A text value. |
+| `.int(Int64)` | A 64-bit integer value. `.int(Int)` is also available. |
+| `.double(Double)` | A floating-point value. |
+| `.bool(Bool)` | A boolean value. |
+| `.uuid(UUID)` | A UUID value. |
+| `.date(Date)` | A date value. |
 
 ### `CursorOrder`
 
@@ -90,7 +106,7 @@ navigate forward and backward.
 | `hasMorePages` | Whether more items exist beyond this page. |
 | `onFirstPage` / `onLastPage` | Position flags. |
 | `orders` | The ordering terms, in precedence order. |
-| `valuesForElement` | Closure that extracts the stringified anchor values for an item. |
+| `valuesForElement` | Closure that extracts the typed anchor values for an item. |
 | `orderColumn` | The first ordering column (convenience for single-column callers). |
 | `nextCursor() / previousCursor() -> Cursor?` | Cursors for the next / previous page, derived from the order columns. |
 | `nextPageUrl() / previousPageUrl() -> String?` | Full URLs for the next / previous page, including any appended query parameters and the URL fragment. |
@@ -128,7 +144,7 @@ public func cursorPaginate(
     orders: [CursorOrder],
     cursorName: String = VaporPagination.defaultCursorName,
     baseURL: URL? = nil,
-    valuesForElement: @escaping (Model) -> [String: String]
+    valuesForElement: @escaping (Model) -> [String: CursorValue]
 ) async throws -> CursorPaginator<Model>
 ```
 
@@ -151,7 +167,7 @@ sort order are reversed for backward traversal. The query fetches
 | `orders` | — | Ordering terms, in precedence order. |
 | `cursorName` | `"cursor"` | Query-string parameter name carrying the cursor. |
 | `baseURL` | `nil` | Origin override for generated page URLs. Useful for direct TLS deployments. |
-| `valuesForElement` | — | Closure that returns the stringified anchor value for every ordered column, keyed by column name. |
+| `valuesForElement` | — | Closure that returns the typed anchor value for every ordered column, keyed by column name. |
 
 If the query already declares a sort on one of the ordered columns, its
 direction takes precedence over the direction in the corresponding
@@ -170,9 +186,9 @@ try await User.query(on: database)
         orders: [.ascending("lastName"), .ascending("firstName"), .ascending("id")]
     ) { user in
         [
-            "lastName": user.lastName,
-            "firstName": user.firstName,
-            "id": user.id!.uuidString,
+            "lastName": .string(user.lastName),
+            "firstName": .string(user.firstName),
+            "id": .uuid(user.id!),
         ]
     }
 ```
@@ -187,7 +203,7 @@ try await User.query(on: database)
         on: req,
         orders: [.ascending("name"), .descending("id")]
     ) { user in
-        ["name": user.name, "id": user.id!.uuidString]
+        ["name": .string(user.name), "id": .uuid(user.id!)]
     }
 ```
 
@@ -204,7 +220,7 @@ public func cursorPaginate(
     orderColumn: String? = nil,
     cursorName: String = VaporPagination.defaultCursorName,
     baseURL: URL? = nil,
-    keyForElement: @escaping (Model) -> String
+    valueForElement: @escaping (Model) -> CursorValue
 ) async throws -> CursorPaginator<Model>
 ```
 
@@ -220,48 +236,29 @@ must declare the same sort before invoking, e.g. `.sort(\.$id)`.
 | `orderColumn` | `"id"` | Database column to order and cursor by. |
 | `cursorName` | `"cursor"` | Query-string parameter name carrying the cursor. |
 | `baseURL` | `nil` | Origin override for generated page URLs. Useful for direct TLS deployments. |
-| `keyForElement` | Reads `model.id` | Closure that extracts the stringified cursor-anchor value from a model. **Required** when using a non-`id` order column. |
+| `valueForElement` | Reads `model.id` | Closure that extracts the typed cursor-anchor value from a model. **Required** when using a non-`id` order column. |
 
 > **Note:** When `orderColumn` is `"id"` (the default), the library
 > automatically extracts the model's ID value for the cursor — you
-> don't need to pass `keyForElement`. For any other column you **must**
-> provide a `keyForElement` closure (see the examples below).
-
-For non-default order columns, pass the column name explicitly and provide
-a `keyForElement` closure that extracts the cursor-anchor value from each
-model. The closure must return a string representation that is
-**lexicographically sortable** in the same order as the column:
+> don't need to pass `valueForElement`. For any other column you **must**
+> provide a `valueForElement` closure.
 
 ```swift
-// Ordering by a date column using ISO 8601 (lexicographically sortable):
+// Ordering by a date column:
 try await Article.query(on: database)
     .filter(\.$published == true)
     .sort(\.$publishedAt, .ascending)
     .cursorPaginate(perPage: 20, on: req, orderColumn: "publishedAt") { article in
-        // ISO 8601 round-trips through parseLiteral and is
-        // lexicographically sortable.
-        ISO8601DateFormatter().string(from: article.publishedAt)
-    }
-
-// Ordering by a date column using a Unix timestamp:
-try await Article.query(on: database)
-    .filter(\.$published == true)
-    .sort(\.$publishedAt, .ascending)
-    .cursorPaginate(perPage: 20, on: req, orderColumn: "publishedAt") { article in
-        String(article.publishedAt.timeIntervalSince1970)
+        .date(article.publishedAt)
     }
 
 // Ordering by a numeric column:
 try await Product.query(on: database)
     .sort(\.$price, .ascending)
     .cursorPaginate(perPage: 20, on: req, orderColumn: "price") { product in
-        String(product.price)
+        .double(product.price)
     }
 ```
-
-The library's `parseLiteral` helper recognises `Int`, `UUID`, ISO 8601
-dates, and Unix timestamps (as `Date`), and binds them with the correct
-SQL type. The same parser is used for every column in a multi-column cursor.
 
 ## Usage examples
 

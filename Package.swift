@@ -34,6 +34,7 @@ let package = Package(
                 .product(name: "FluentKit", package: "fluent-kit"),
                 .product(name: "FluentSQLiteDriver", package: "fluent-sqlite-driver"),
                 .product(name: "Vapor", package: "vapor"),
+                .product(name: "VaporUtilities", package: "vapor-utilities"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "Logging", package: "swift-log"),

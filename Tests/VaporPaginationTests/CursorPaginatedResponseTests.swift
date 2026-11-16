@@ -30,7 +30,7 @@ struct CursorPaginatedResponseTests {
             query: query,
             fragment: fragment,
             orderColumn: "id",
-            keyForElement: { String($0.id) }
+            valueForElement: { .int($0.id) }
         )
     }
 
@@ -57,7 +57,7 @@ struct CursorPaginatedResponseTests {
 
     @Test
     func makeResponseMiddlePage() {
-        let current = Cursor(points: .next, values: ["id": "3"])
+        let current = Cursor(points: .next, values: ["id": .int(3)])
         let paginator = makePaginator(
             items: [User(id: 4, name: "d"), User(id: 5, name: "e"), User(id: 6, name: "f")],
             cursor: current,
@@ -77,7 +77,7 @@ struct CursorPaginatedResponseTests {
 
     @Test
     func makeResponseLastPage() {
-        let current = Cursor(points: .next, values: ["id": "6"])
+        let current = Cursor(points: .next, values: ["id": .int(6)])
         let paginator = makePaginator(
             items: [User(id: 7, name: "g"), User(id: 8, name: "h"), User(id: 9, name: "i")],
             cursor: current,
@@ -159,7 +159,7 @@ struct CursorPaginatedResponseTests {
 
     @Test
     func respondingWithCursorRetainsCursorInMeta() {
-        let current = Cursor(points: .next, values: ["id": "3"])
+        let current = Cursor(points: .next, values: ["id": .int(3)])
         let paginator = makePaginator(
             items: [User(id: 4, name: "d"), User(id: 5, name: "e")],
             cursor: current,
@@ -179,7 +179,7 @@ struct CursorPaginatedResponseTests {
 
     @Test
     func respondingOnLastPageHasNilNext() {
-        let current = Cursor(points: .next, values: ["id": "6"])
+        let current = Cursor(points: .next, values: ["id": .int(6)])
         let paginator = makePaginator(
             items: [User(id: 7, name: "g")],
             cursor: current,

@@ -29,10 +29,8 @@ extension QueryBuilder {
     /// - Parameter cursorName: Query-string parameter name carrying the cursor.
     ///   Defaults to `"cursor"`.
     /// - Parameter baseURL: An optional origin override for generated page URLs.
-    /// - Parameter valuesForElement: Extracts the stringified anchor values for
-    ///   a model, keyed by column name. Every column in `orders` must be
-    ///   present, and each value must round-trip through the library's literal
-    ///   parser (`Int`, `UUID`, ISO 8601 date, Unix timestamp, or text).
+    /// - Parameter valuesForElement: Extracts the typed anchor values for a
+    ///   model, keyed by column name. Every column in `orders` must be present.
     ///
     /// ```swift
     /// try await User.query(on: database)
@@ -45,9 +43,9 @@ extension QueryBuilder {
     ///         orders: [.ascending("lastName"), .ascending("firstName"), .ascending("id")]
     ///     ) { user in
     ///         [
-    ///             "lastName": user.lastName,
-    ///             "firstName": user.firstName,
-    ///             "id": user.id!.uuidString,
+    ///             "lastName": .string(user.lastName),
+    ///             "firstName": .string(user.firstName),
+    ///             "id": .uuid(user.id!),
     ///         ]
     ///     }
     /// ```
@@ -57,7 +55,7 @@ extension QueryBuilder {
         orders: [CursorOrder],
         cursorName: String = VaporPagination.defaultCursorName,
         baseURL: URL? = nil,
-        valuesForElement: @escaping (Model) -> [String: String]
+        valuesForElement: @escaping (Model) -> [String: CursorValue]
     ) async throws -> CursorPaginator<Model> {
         try await self._cursorPaginate(
             perPage: perPage,
@@ -69,11 +67,8 @@ extension QueryBuilder {
         )
     }
 
-    /// Returns a cursor-paginated page of models ordered by a single column.
-    ///
-    /// Performs the equivalent of `WHERE col <op> value` + `LIMIT
-    /// perPage + 1`, with the extra row used to detect `hasMore`.
-    /// Backward traversal reverses the sort + result in memory.
+    /// Returns a cursor-paginated page of models ordered by a single column,
+    /// with a typed anchor value.
     ///
     /// `orderColumn` defaults to the model's `@ID` (`$id`). The caller must
     /// declare the same sort (`sort`) before invoking this, e.g. `.sort(\.$id)`.
@@ -86,26 +81,23 @@ extension QueryBuilder {
     /// - Parameter cursorName: Query-string parameter name carrying the cursor.
     ///   Defaults to `"cursor"`.
     /// - Parameter baseURL: An optional origin override for generated page URLs.
-    /// - Parameter keyForElement: Extracts the stringified cursor-anchor value
-    ///   from a model. For the default `"id"` order column the library handles
-    ///   this automatically. For custom columns you must provide a closure that
-    ///   returns a string representation of the column's value.
+    /// - Parameter valueForElement: Extracts the typed cursor-anchor value from
+    ///   a model.
     ///
-    ///   For example, ordering by `"createdAt"`:
-    ///   ```swift
-    ///   try await Article.query(on: database)
-    ///       .sort(\.$createdAt, .ascending)
-    ///       .cursorPaginate(perPage: 20, on: req, orderColumn: "createdAt") { article in
-    ///           String(article.createdAt.timeIntervalSince1970)
-    ///       }
-    ///   ```
+    /// ```swift
+    /// try await Article.query(on: database)
+    ///     .sort(\.$createdAt, .ascending)
+    ///     .cursorPaginate(perPage: 20, on: req, orderColumn: "createdAt") { article in
+    ///         .date(article.createdAt)
+    ///     }
+    /// ```
     public func cursorPaginate(
         perPage: Int,
         on request: Request,
         orderColumn: String? = nil,
         cursorName: String = VaporPagination.defaultCursorName,
         baseURL: URL? = nil,
-        keyForElement: @escaping (Model) -> String
+        valueForElement: @escaping (Model) -> CursorValue
     ) async throws -> CursorPaginator<Model> {
         let column = orderColumn ?? Self.idKeyString(for: Model.self)
         return try await self._cursorPaginate(
@@ -114,12 +106,12 @@ extension QueryBuilder {
             orders: [CursorOrder(column: column)],
             cursorName: cursorName,
             baseURL: baseURL,
-            valuesForElement: { [column: keyForElement($0)] }
+            valuesForElement: { [column: valueForElement($0)] }
         )
     }
 
-    /// Overload with a default `keyForElement` that reads `model.id`.
-    /// This overload exists because `Self.keyValue(of:)` cannot be referenced
+    /// Overload with a default anchor value that reads `model.id`.
+    /// This overload exists because `Self.cursorValue(of:)` cannot be referenced
     /// from a default argument expression on an `extension QueryBuilder` method.
     public func cursorPaginate(
         perPage: Int,
@@ -135,7 +127,7 @@ extension QueryBuilder {
             orders: [CursorOrder(column: column)],
             cursorName: cursorName,
             baseURL: baseURL,
-            valuesForElement: { [column: Self.keyValue(of: $0)] }
+            valuesForElement: { [column: Self.cursorValue(of: $0)] }
         )
     }
 
@@ -147,7 +139,7 @@ extension QueryBuilder {
         orders: [CursorOrder],
         cursorName: String,
         baseURL: URL?,
-        valuesForElement: @escaping (Model) -> [String: String]
+        valuesForElement: @escaping (Model) -> [String: CursorValue]
     ) async throws -> CursorPaginator<Model> {
         let cursor = Cursor(from: request.query[String.self, at: cursorName])
 
@@ -230,11 +222,11 @@ extension QueryBuilder {
         cursor: Cursor,
         reverse: Bool
     ) -> DatabaseQuery.Filter? {
-        // Collect the cursor values for the leading run of ordered columns.
+        // Collect the typed cursor values for the leading run of ordered columns.
         var terms: [(order: CursorOrder, value: DatabaseQuery.Value)] = []
         for order in orders {
-            guard let raw = cursor[order.column], let value = Self.parseLiteral(raw) else { break }
-            terms.append((order, value))
+            guard let value = cursor[order.column] else { break }
+            terms.append((order, Self.databaseValue(for: value)))
         }
         guard !terms.isEmpty else { return nil }
 
@@ -330,32 +322,26 @@ extension QueryBuilder {
         }
     }
 
-    /// Converts a cursor-anchor string back into a `DatabaseQuery.Value`
-    /// with the correct runtime type so the SQL driver binds it properly.
-    ///
-    /// Recognises, in order:
-    /// - `Int` (including `Int64`)
-    /// - `UUID`
-    /// - ISO 8601 date (e.g. `2024-01-15T10:30:00Z`)
-    /// - Unix timestamp as `Double` (e.g. `1705312200.0`)
-    /// - Falls back to plain text
-    private static func parseLiteral(_ value: String?) -> DatabaseQuery.Value? {
-        guard let value, !value.isEmpty else { return nil }
-        if let i = Int(value) { return .bind(i) }
-        if let i = Int64(value) { return .bind(i) }
-        if let u = UUID(uuidString: value) { return .bind(u) }
-        if let d = ISO8601DateFormatter().date(from: value) { return .bind(d) }
-        if let t = Double(value) { return .bind(Date(timeIntervalSince1970: t)) }
-        return .bind(value)
+    /// Maps a typed cursor value to a `DatabaseQuery.Value` so the SQL driver
+    /// binds it with the correct runtime type.
+    private static func databaseValue(for value: CursorValue) -> DatabaseQuery.Value {
+        switch value {
+        case .string(let value): return .bind(value)
+        case .int(let value): return .bind(value)
+        case .double(let value): return .bind(value)
+        case .bool(let value): return .bind(value)
+        case .uuid(let value): return .bind(value)
+        case .date(let value): return .bind(value)
+        }
     }
 
-    /// Default anchor-value extractor — reads `model.id` and returns a
-    /// string representation. Used automatically when `orderColumn` is `"id"`.
-    private static func keyValue(of model: Model) -> String {
-        if let id = model.id as? String { return id }
-        if let id = model.id as? Int { return String(id) }
-        if let id = model.id as? Int64 { return String(id) }
-        if let id = model.id as? UUID { return id.uuidString }
-        return String(describing: model.id)
+    /// Default anchor-value extractor — reads `model.id` and returns a typed
+    /// value. Used automatically when `orderColumn` is `"id"`.
+    private static func cursorValue(of model: Model) -> CursorValue {
+        if let id = model.id as? String { return .string(id) }
+        if let id = model.id as? Int { return .int(Int64(id)) }
+        if let id = model.id as? Int64 { return .int(id) }
+        if let id = model.id as? UUID { return .uuid(id) }
+        return .string(String(describing: model.id))
     }
 }

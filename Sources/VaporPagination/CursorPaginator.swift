@@ -35,9 +35,9 @@ public struct CursorPaginator<Element> {
     /// The ordering terms cursors are anchored to, in precedence order.
     public let orders: [CursorOrder]
 
-    /// Extracts the stringified anchor values for a given element, keyed by
-    /// column name.
-    public let valuesForElement: (Element) -> [String: String]
+    /// Extracts the typed anchor values for a given element, keyed by column
+    /// name.
+    public let valuesForElement: (Element) -> [String: CursorValue]
 
     public init(
         items: [Element],
@@ -49,7 +49,7 @@ public struct CursorPaginator<Element> {
         query: [String: String] = [:],
         fragment: String? = nil,
         orders: [CursorOrder],
-        valuesForElement: @escaping (Element) -> [String: String]
+        valuesForElement: @escaping (Element) -> [String: CursorValue]
     ) {
         self.items = items
         self.perPage = perPage
@@ -63,7 +63,7 @@ public struct CursorPaginator<Element> {
         self.valuesForElement = valuesForElement
     }
 
-    /// Convenience initializer for single-column ordering.
+    /// Convenience initializer for single-column ordering with a typed value.
     public init(
         items: [Element],
         perPage: Int,
@@ -74,7 +74,7 @@ public struct CursorPaginator<Element> {
         query: [String: String] = [:],
         fragment: String? = nil,
         orderColumn: String,
-        keyForElement: @escaping (Element) -> String
+        valueForElement: @escaping (Element) -> CursorValue
     ) {
         self.init(
             items: items,
@@ -86,7 +86,7 @@ public struct CursorPaginator<Element> {
             query: query,
             fragment: fragment,
             orders: [CursorOrder(column: orderColumn)],
-            valuesForElement: { [orderColumn: keyForElement($0)] }
+            valuesForElement: { [orderColumn: valueForElement($0)] }
         )
     }
 }

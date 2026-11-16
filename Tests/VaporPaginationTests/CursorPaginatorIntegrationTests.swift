@@ -91,7 +91,7 @@ struct CursorPaginatorIntegrationTests {
                     on: request,
                     orders: orders,
                     valuesForElement: { user in
-                        ["name": user.name, "id": user.id!.uuidString]
+                        ["name": .string(user.name), "id": .uuid(user.id!)]
                     }
                 )
             collected.append(contentsOf: page.items)
